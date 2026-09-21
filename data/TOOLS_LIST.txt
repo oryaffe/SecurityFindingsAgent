@@ -1,0 +1,109 @@
+### 1
+
+NAME: `lookup_user_by_email`
+DESCRIPTION: Finds the user by the email provided at the beginning of the conversation and resolves the internal user identifier used throughout the session.
+TABLE: `USERS`
+TYPE: READ
+LOGIC: Access `USERS`, search `USERS.email` using the provided email, if a matching user exists return the user data including `USERS.id` as `user_id`; the APP stores this value and supplies it to later user-scoped tool calls. If no matching user exists return authentication failure.
+INPUT: email
+OUTPUT: user_id (`USERS.id`), employee_user_id (`USERS.user_id`), email, role, department, last_login
+
+### 2
+
+NAME: `get_user_assets`
+DESCRIPTION: Returns all assets assigned to the current user.
+TABLE: `ASSETS`
+TYPE: READ
+LOGIC: Access `ASSETS`, use the provided `user_id`, filter rows where `ASSETS.owner_user_id = user_id`, return all matching assets.
+INPUT: user_id
+OUTPUT: asset_tag, name, type, ip_address, mac_address, os, location
+
+### 3
+
+NAME: `get_asset_details`
+DESCRIPTION: Returns detailed information about one specific asset owned by the current user.
+TABLE: `ASSETS`
+TYPE: READ
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify that `ASSETS.owner_user_id = user_id`, if ownership matches return the asset details, otherwise return access denied.
+INPUT: user_id, asset_name
+OUTPUT: asset_tag, name, type, ip_address, mac_address, os, location
+
+### 4
+
+NAME: `get_finding_details`
+DESCRIPTION: Searches the shared Findings catalog and returns general information about security findings.
+TABLE: `FINDINGS`
+TYPE: READ
+LOGIC: Access `FINDINGS`, query the table using one or more optional filters, `cve_id`, `finding_type`, `severity`, combine all provided filters in the same query, no access to `ASSETS` is required because `FINDINGS` contains shared catalog data only.
+INPUT: cve_id, finding_type, severity
+OUTPUT: finding_type, cve_id, title, severity, description, remediation_guide_ref
+
+### 5
+
+NAME: `get_asset_scans`
+DESCRIPTION: Returns scan executions performed against a specific asset owned by the current user.
+TABLE: `ASSETS`, `SCANS`
+TYPE: READ
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify `ASSETS.owner_user_id = user_id`, retrieve `ASSETS.id` as `asset_id`, access `SCANS`, query rows where `SCANS.asset_id = asset_id`, return all matching scan executions including `SCANS.id` as `scan_id` so a detected finding can be tied back to the scan that produced it.
+INPUT: user_id, asset_name
+OUTPUT: scan_id, scan_time, scanner_tool, status
+
+### 6
+
+NAME: `get_asset_scan_results`
+DESCRIPTION: Returns the findings detected on a specific asset together with their remediation status and finding information.
+TABLE: `ASSETS`, `SCAN_RESULTS`, `FINDINGS`
+TYPE: READ
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify `ASSETS.owner_user_id = user_id`, retrieve `ASSETS.id` as `asset_id`, access `SCAN_RESULTS`, query rows where `SCAN_RESULTS.asset_id = asset_id`, access `FINDINGS`, JOIN `SCAN_RESULTS.finding_id` to `FINDINGS.id`, return the matching Scan Result data together with the Finding information, including `SCAN_RESULTS.scan_id` so each detected finding can be matched to the specific scan execution that produced it.
+INPUT: user_id, asset_name
+OUTPUT: scan_id, status, comments, finding_type, cve_id, title, severity
+
+### 7
+
+NAME: `get_asset_risk_acceptances`
+DESCRIPTION: Returns existing risk-acceptance records associated with a specific asset owned by the current user.
+TABLE: `ASSETS`, `RISK_ACCEPTANCES`
+TYPE: READ
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify `ASSETS.owner_user_id = user_id`, retrieve `ASSETS.id` as `asset_id`, access `RISK_ACCEPTANCES`, query rows where `RISK_ACCEPTANCES.asset_id = asset_id`, return all matching records.
+INPUT: user_id, asset_name
+OUTPUT: requested_at, justification, status, review_date
+
+### 8
+
+NAME: `get_asset_patch_history`
+DESCRIPTION: Returns remediation actions that were previously performed or attempted on a specific asset.
+TABLE: `ASSETS`, `PATCH_HISTORY`
+TYPE: READ
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify `ASSETS.owner_user_id = user_id`, retrieve `ASSETS.id` as `asset_id`, access `PATCH_HISTORY`, query rows where `PATCH_HISTORY.asset_id = asset_id`, return all remediation actions associated with that asset.
+INPUT: user_id, asset_name
+OUTPUT: action_taken, status, performed_at
+
+### 9
+
+NAME: `get_user_remediation_tickets`
+DESCRIPTION: Returns remediation tickets attributed to the current user.
+TABLE: `REMEDIATION_TICKETS`, `ASSETS`
+TYPE: READ
+LOGIC: Access `REMEDIATION_TICKETS`, use the provided `user_id`, filter rows where `REMEDIATION_TICKETS.reporting_user_id = user_id`, access `ASSETS`, JOIN `REMEDIATION_TICKETS.asset_id` to `ASSETS.id` so the tool can return the human-readable asset name instead of only the internal Asset ID.
+INPUT: user_id
+OUTPUT: ticket_id, asset_name, title, status, created_at, updated_at
+
+### 10
+
+NAME: `open_remediation_ticket`
+DESCRIPTION: Creates a new remediation ticket for an asset owned by the current user.
+TABLE: `ASSETS`, `REMEDIATION_TICKETS`
+TYPE: WRITE
+LOGIC: Access `ASSETS`, search `ASSETS.name` using `asset_name`, verify `ASSETS.owner_user_id = user_id`, retrieve `ASSETS.id` as `asset_id`, access `REMEDIATION_TICKETS`, use the provided `user_id` as `reporting_user_id`, INSERT a new row into `REMEDIATION_TICKETS`, set `status = Open`, set `created_at = current time`, set `updated_at = NULL`, return the newly created ticket information.
+INPUT: user_id, asset_name, title
+OUTPUT: ticket_id, asset_name, title, status, created_at
+
+### 11
+
+NAME: `verify_user_credentials`
+DESCRIPTION: Verifies an email + password pair for authentication. Returns the user identity on success; returns authentication failure otherwise.
+TABLE: `USERS`
+TYPE: READ
+LOGIC: SELECT the user row by (normalized) email. If no row -> AUTH_FAILURE. Compare the provided password against password_hash using bcrypt.checkpw. If mismatch -> AUTH_FAILURE. On success return the same JSON shape as lookup_user_by_email — identical fields and field names (user_id, employee_user_id, email, role, department, last_login). NEVER include password_hash in any return value, log line, or exception.
+INPUT: email (str), password (str)
+OUTPUT: same fields as lookup_user_by_email
