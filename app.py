@@ -16,7 +16,7 @@ Environment:
   JWT_EXPIRE_MINUTES        Optional (default: 480)
 
 Run (use a port other than the MCP server, which defaults to 8000):
-  uvicorn app:app --reload --port 8080
+  uvicorn app:app --port 8080
 """
 
 from __future__ import annotations
