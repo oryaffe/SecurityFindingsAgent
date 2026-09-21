@@ -6,7 +6,7 @@ Linux/macOS (e.g. the EC2 deployment). Safe to run even if nothing is
 listening on the ports -- it simply does nothing in that case.
 
 Run standalone:
-    python kill_port.py
+    python kill_ports.py
 
 Or import and call free_port(port) from a launcher script before starting
 mcp_server.py / uvicorn.
