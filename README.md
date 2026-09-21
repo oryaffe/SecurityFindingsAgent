@@ -6,6 +6,9 @@ The system combines **policy RAG**, an **LLM tool-use loop**, and **MCP-backed S
 
 > Educational project, not a production security platform. It queries stored scan results. It does not run vulnerability scans, install patches, or create tickets in Jira or ServiceNow.
 
+## Demo
+![Security Findings Agent demo](docs/images/security-agent-demo.png)
+
 ## What it does
 
 - Answers hardening and remediation questions using local RAG over 21 security policy and remediation documents.
