@@ -43,7 +43,7 @@ Keep that session open, then browse to `http://localhost:8080` on the PC.
 
 ## Reproducing the deployment
 
-1. Launch Ubuntu 24.04 with the settings in the table above. Restrict SSH to your IP.
+1. Launch an Ubuntu 24.04 EC2 instance. Restrict SSH access to your IP.
 2. Connect over SSH and update the OS:
    ```bash
    sudo apt update && sudo apt upgrade -y

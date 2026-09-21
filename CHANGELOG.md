@@ -24,7 +24,7 @@ Significant project milestones. No version number or release date is assigned un
 ### Documentation
 
 - Installation, user, architecture, deployment, troubleshooting, and validation guides.
-- Course requirement mapping, including the adaptation from the original store assignment.
+- Project requirement mapping, including the adaptation from the original store assignment.
 - Security and contribution policies, and an environment template.
 
 ### Not implemented (optional course stretch goals)
