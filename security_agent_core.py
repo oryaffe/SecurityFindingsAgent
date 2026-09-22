@@ -164,6 +164,7 @@ FINDING AND PATCH SEMANTICS
 - Do not invent root-cause relationships between findings.
 
 RISK ACCEPTANCE
+- Retrieving a risk-acceptance record during remediation-context lookup does not make it relevant to the queried CVE. Omit unrelated records. If a record is presented or the user asks about it, preserve its exact fields and do not infer a finding link from its justification. Do not add a Finding status field merely to justify displaying an unrelated record.
 - Keep finding status separate from risk-acceptance status. An Approved risk acceptance does not change an Unremediated finding into remediated.
 - Approved is only the status of the risk-acceptance record. It does not mean remediated, does not mean remediation is deferred, does not mean that no immediate remediation is required, and does not authorize continued use until any date.
 - State a policy conclusion such as "no immediate remediation is required" only when retrieved policy explicitly establishes that conclusion for this situation.
@@ -185,7 +186,7 @@ TICKETS
 - Do not invent owners, teams, or a "primary ticket".
 - Do not create a duplicate remediation ticket when an existing open or in-progress ticket already covers the same work.
 - Only claim an operation was performed when an available tool actually performed it successfully.
-- You cannot patch systems, rescan systems, close findings, modify risk acceptances, or update existing tickets unless there is an explicit available tool.
+- You cannot patch systems, run scans, change finding status, modify risk acceptances, or update existing tickets unless there is an explicit available tool.
 - Before recommending, offering, or discussing creation of a remediation ticket, you MUST first call get_user_remediation_tickets.
 - Do not ask the user whether to check existing tickets. Check them automatically when ticket creation may be relevant.
 - If an existing Open or In Progress ticket already covers the work, report that ticket and do not recommend creating another one.
@@ -193,14 +194,14 @@ TICKETS
 - Do not state that related tickets must be updated, closed, or verified unless retrieved data or policy explicitly requires it.
 - When remediation verification is required, recommend the verification action itself, for example "Run a verifying rescan to confirm remediation.", and report existing tickets separately as existing tickets for the asset.
 - When multiple existing tickets are present and no explicit workflow relationship was retrieved: report the tickets factually in the table, recommend the remediation or verification action separately, and do not assign the action or evidence to a specific ticket.
-- A rescan verifies remediation; it does not itself automatically close a finding. Do not phrase "rescan" as an automatic closure action.
+- A rescan verifies remediation. It does not by itself change the finding's status.
 
 POLICY AND SLA
 - Use search_policies for organizational requirements.
 - Policy conditions must be applied only when their prerequisites are verified from operational data.
 - In an asset-specific answer, do not include production-, staging-, internet-facing-, or environment-specific requirements unless that condition was explicitly retrieved for the asset.
 - Do not invent remediation deadlines or timelines.
-- SLA durations may be explained from policy.
+- SLA durations may be explained from policy. Preserve the retrieved severity/duration mapping and any shared qualifier heading, such as "from first detection". Quote relevant list items under that exact heading rather than combining them into a new summary sentence.
 - Do not claim a finding is overdue unless the operational data includes the required detection date.
 - Do not convert SLA durations into "this week", "within N days from now", or overdue status without the required detection date.
 - Preserve temporal wording such as "next quarter" without converting it into a specific date.
@@ -219,6 +220,11 @@ GENERAL
 - Do not describe an asset as production, staging, or development unless retrieved metadata explicitly states that environment. Asset names alone are not evidence.
 
 FINAL ANSWER FORMAT
+
+- Copy Action, Status, Recorded timestamp, Justification and Review date exactly from the same retrieved record; never assemble a block from multiple records. Keep each field on one line and preserve the full recorded timestamp. Use "Not recorded" for a null value.
+- When records concern multiple assets, add "Asset: <retrieved asset_name>" inside each Patch history or Risk acceptance block. Repeat the block label for each record.
+- Risk acceptances are stored at asset level. Do not infer a finding link from their justification. In Finding status, use the asset's retrieved status only when unambiguous. For mixed finding statuses, write "Reported separately in Findings" and show those findings separately. If no finding state was retrieved for that asset, write "Not retrieved".
+- Every policy attribution, including "Policy requirement:", needs a supported statement, not just words found elsewhere in the policy. An independent semicolon clause is allowed only when it preserves all applicable conditions and negations. A clause beginning after/when/only/unless must retain that condition.
 - Keep the final answer concise and avoid repeating the same information.
 - For asset-specific remediation answers, use three sections only:
   1. Findings
@@ -229,7 +235,9 @@ FINAL ANSWER FORMAT
 - Use short plain-text labels such as "Tickets:", "Patch history:", and "Risk acceptance:".
 - Use a regular hyphen "-" rather than the Unicode em dash character.
 - Do not output standalone Markdown horizontal rules such as a line containing only "---".
-- Phrase verification as "Run a verifying rescan to confirm remediation." A finding may be closed only after remediation is verified; never phrase the rescan itself as closing the finding.
+- Phrase verification as "Run a verifying rescan to confirm remediation."
+- Keep operational recommendations separate from policy quotations. For policy requirements, quote a complete retrieved sentence or list item, preserving all conditions and negations. A complete policy quotation may mention both rescan and closure; never imply that a scan automatically changes a finding's status.
+- Put a policy quotation on its own line, optionally prefixed with "Policy requirement:". Do not append an operational instruction or ticket action to it.
 - In Findings, summarize each finding in one or two lines. When multiple findings share the same remediation procedure, describe that procedure once.
 - In Existing remediation state, present tickets as a compact table whenever one or more tickets are returned, using exactly these columns and only retrieved values:
 
@@ -580,6 +588,13 @@ def update_trace_state(
     except json.JSONDecodeError:
         return
 
+    if name == "open_remediation_ticket" and isinstance(data, dict):
+        if all(key in data for key in ("ticket_id", "asset_name", "title", "status", "created_at")):
+            created = trace_state.setdefault("created_tickets", [])
+            created[:] = [r for r in created if r.get("ticket_id") != data["ticket_id"]]
+            created.append(data)
+        return
+
     flat_key = TRACE_KEY_BY_TOOL.get(name)
 
     if flat_key is None or not isinstance(data, list):
@@ -770,14 +785,134 @@ def build_final_thinking_summary(
 
 FINAL_ANSWER_CORRECTION_INSTRUCTION = """FINAL ANSWER VALIDATION FAILED.
 
-Rewrite the final answer using only already retrieved facts and policy context.
+Rewrite the final answer using only facts and policy context already retrieved
+in this turn.
 
 Violations:
 {violations}
 
-Return only the corrected final answer.
+You MUST correct every listed violation.
+
+For an asset-specific remediation answer, use exactly these three plain-text
+section titles:
+
+Findings
+
+Existing remediation state
+
+Recommended next actions
+
+Do not use Markdown heading markers (#, ##, etc.) or Markdown bold (**).
+
+If remediation tickets were retrieved, under "Existing remediation state"
+present them exactly with this table header:
+
+Tickets:
+
+| Ticket | Status | Title | Created |
+|--------|--------|-------|---------|
+
+Use only retrieved ticket values, or values returned by a successful ticket
+creation in this turn. Each row must match one complete record: ID, status,
+title and creation timestamp (a date-only Created cell is allowed).
+Do not infer workflow, responsibility, verification, or next actions from a
+ticket title.
+
+If patch-history records were retrieved, present every relevant record using:
+
+Patch history:
+Action: <retrieved action_taken>
+Status: <retrieved status>
+Recorded timestamp: <retrieved performed_at>
+
+Keep Action, Status, and Recorded timestamp as separate facts.
+Do not reinterpret the recorded timestamp as an execution date, completion
+date, scheduled date, maintenance-window date, or patch date.
+
+After patch-history records, state:
+
+This record does not confirm that remediation has been verified.
+
+Risk Acceptance retrieval does not establish relevance to the queried CVE.
+If an unrelated asset-level record was omitted, leave it omitted. Do not add
+a Risk acceptance block or Finding status field merely because the lookup
+returned a record. If the user asks about risk acceptance, or a relevant
+record is included, validate and report it using the structure below.
+Never infer a CVE link from the asset name, technology or justification.
+
+For a Risk Acceptance record that is actually presented, use:
+
+Risk acceptance:
+Status: <retrieved status>
+Justification: <retrieved justification>
+Review date: <retrieved review_date>
+Finding status: <retrieved finding status>
+
+The following record-value rules apply to records actually presented;
+they do not require displaying an unrelated Risk Acceptance.
+
+For record-value violations, copy the complete stored tuple from one retrieved
+record. Keep field text on one line. Do not paraphrase Action or Justification.
+Keep the full Recorded timestamp; use Not recorded for null values.
+Repeat the Patch history or Risk acceptance label for each record. If records
+span multiple assets, include Asset: <retrieved asset_name> inside each block.
+Risk acceptances do not identify a finding. With mixed finding statuses on the
+same asset, use Finding status: Reported separately in Findings. If no finding
+status was retrieved for that asset, use Finding status: Not retrieved.
+
+Keep finding status, ticket status, patch-history status, and risk-acceptance
+status separate.
+
+When verification is required, use this as a separate sentence:
+
+Run a verifying rescan to confirm remediation.
+
+A complete retrieved policy sentence may mention both rescan and closure.
+Preserve its conditions and negations. Never claim that a rescan automatically
+changes the finding status. Keep operational recommendations separate.
+
+Keep operational facts separate from policy statements.
+
+When presenting organizational policy, keep the meaning faithful to the
+retrieved policy context and do not introduce unsupported terms.
+
+Prefer neutral labels such as "Policy requirement:" instead of attribution
+phrases such as "according to policy" or "policy requires".
+
+Every attributed claim, including "Policy requirement:", must match a retrieved
+statement or an independent semicolon clause. A vocabulary match is not enough:
+never recombine a severity with another severity's deadline. Preserve conditions
+such as after/when approval. Positive closure rules require retrieved policy.
+An explicit denial of automatic closure may be stated without a policy quote.
+
+For a policy-related violation, use a complete sentence or list item from the
+retrieved policy, including all conditions and negations. Put it on its own
+line, optionally prefixed with "Policy requirement:". Do not extract a clause
+from a conditional or prohibited statement. Do not append an operational
+recommendation, a ticket action, or "and close it" to a policy quotation.
+If no complete supporting statement was retrieved, omit the unsupported
+claim. Recommend a verifying rescan separately when appropriate.
+
+For SLA policy statements, copy the complete retrieved sentence or list
+item without restructuring its severity/duration mapping. Preserve qualifiers
+such as "from first detection" in their original scope. Do not transform
+several items into a new summary sentence or move their qualifier to its end.
+For a qualified list, use a standalone "Policy requirement:" label, then copy
+the retrieved shared heading with its qualifier, followed by the relevant
+complete list items on separate lines. Keep the heading's scope attached to
+those items. Include only severity levels relevant to the user's question.
+If no supported statement/item can be quoted, state that the retrieved policy
+does not establish the requested SLA rather than inventing one.
+
+A policy statement contains policy content only. Whether it uses a label such
+as "Policy requirement:" or an attribution phrase, never add asset names, CVE
+identifiers, ticket numbers, dates, or other operational facts to it unless
+those exact terms are present in the retrieved policy context.
+
 Do not call tools.
 Do not add new facts.
+Do not add a generic offer or question.
+Return only the corrected final answer.
 """
 
 REVIEW_DATE_VIOLATIONS = (
@@ -864,13 +999,13 @@ REQUIRED_RISK_ACCEPTANCE_LABELS = (
     "finding status:",
 )
 
-POLICY_ATTRIBUTION_PHRASES = (
-    "per policy",
-    "according to policy",
-    "policy requires",
-    "required by policy",
-    "organizational policy requires",
+POLICY_ATTRIBUTION_RE = re.compile(
+    r"\b(?:policy\s+(?:requirements?|requires?|states?|mandates?)|"
+    r"policy\s*:|(?:per|according to|under|as required by|as stated in)\s+"
+    r"(?:the\s+)?(?:organizational\s+)?(?:remediation\s+)?"
+    r"(?:policy|guide|guidelines?|standard)\b|required by (?:the )?policy\b)"
 )
+
 
 TICKET_OFFER_PHRASES = (
     "open a remediation ticket",
@@ -882,23 +1017,6 @@ TICKET_OFFER_PHRASES = (
     "open a new ticket",
     "create a new ticket",
 )
-
-ATTRIBUTION_STOPWORDS = frozenset({
-    "per", "policy", "policies", "according", "required", "requires",
-    "requirement", "requirements", "organizational", "organization",
-    "the", "and", "for", "with", "this", "that", "these", "those",
-    "are", "is", "be", "been", "being", "was", "were", "not", "only",
-    "all", "any", "must", "should", "may", "can", "will", "shall",
-    "ensure", "ensured", "ensuring", "enable", "enabled", "disable",
-    "disabled", "apply", "applied", "applying", "configure",
-    "configured", "restrict", "restricted", "restricting", "use",
-    "used", "using", "keep", "set", "run", "running", "remain",
-    "remains", "your", "you", "its", "it", "also", "additionally",
-    "then", "when", "where", "which", "unless", "until", "after",
-    "before", "access", "system", "systems", "asset", "assets",
-    "finding", "findings", "remediation", "remediate", "security",
-})
-
 
 RISK_ACCEPTANCE_VIOLATIONS = (
     "risk acceptance covers",
@@ -913,35 +1031,516 @@ def validate_policy_attributions(
     answer: str,
     trace_state: dict[str, Any],
 ) -> list[str]:
-    """Flag "per policy"-style claims naming terms absent from retrieved policy text."""
+    """Require supported claims, not a bag of words from unrelated policies.
 
-    lowered = answer.lower()
-
-    if not any(phrase in lowered for phrase in POLICY_ATTRIBUTION_PHRASES):
-        return []
-
-    combined_context = "\n".join(
-        trace_state.get("policy_contexts") or []
-    ).lower()
-
+    A label also governs following sentences on its line, or following lines
+    when used as a standalone heading, until the next named section.
+    """
+    context = "\n\n---\n\n".join(trace_state.get("policy_contexts") or [])
     violations: list[str] = []
-
-    for sentence in re.split(r"[.!?\n]", lowered):
-        if not any(phrase in sentence for phrase in POLICY_ATTRIBUTION_PHRASES):
+    # Only a verbatim retrieved scoped heading can qualify subsequent items.
+    # This supports source list layout without fuzzy matching or fixed SLAs.
+    scope_headers = {
+        _normalize_policy_statement(line.strip().strip("#* "))
+        for line in context.splitlines()
+        if (line.strip().startswith("#") or line.strip().strip("* ").endswith(":"))
+        and SCOPING_WORDS_RE.search(line)
+    }
+    policy_scope = ""
+    in_policy_block = False
+    for line in answer.splitlines():
+        normalized = _normalize_policy_statement(line)
+        if not normalized:
             continue
-
-        candidate_terms = re.findall(r"[a-z0-9][a-z0-9\-_]{2,}", sentence)
-
-        for term in candidate_terms:
-            if term in ATTRIBUTION_STOPWORDS:
+        if normalized.rstrip(":") in {
+            "findings", "existing remediation state", "recommended next actions",
+            "tickets", "patch history", "risk acceptance", "general guidance"
+        }:
+            in_policy_block = False
+            policy_scope = ""
+            continue
+        if normalized.rstrip(":") in {
+            "policy", "policy requirement", "policy requirements", "organizational policy"
+        } or POLICY_LABEL_PREFIX_RE.fullmatch(normalized):
+            in_policy_block = True
+            policy_scope = ""
+            continue
+        attributed = in_policy_block
+        for sentence in SENTENCE_BOUNDARY_RE.split(line):
+            claim = _normalize_policy_statement(sentence)
+            attributed = attributed or bool(POLICY_ATTRIBUTION_RE.search(claim))
+            content = _normalize_policy_statement(POLICY_LABEL_PREFIX_RE.sub("", claim))
+            if attributed and content in scope_headers:
+                policy_scope = content
+                in_policy_block = True
                 continue
-            if term in combined_context:
+            scoped_claim = f"{policy_scope} {content}" if policy_scope else claim
+            if attributed and claim and not _is_policy_grounded(scoped_claim, context):
+                violations.append(
+                    "organizational policy claim is not supported by a complete "
+                    "retrieved statement or an independent policy clause; preserve "
+                    f'conditions, severity and duration ("{claim[:120]}")'
+                )
+    return violations
+
+
+RESCAN_STATE_CHANGE_PATTERNS = (
+    r"\brescan\w*\s+(?:automatically\s+)?changes?\s+the\s+finding(?:'s)?\s+status\b",
+    r"\brescan\w*\s+(?:automatically\s+)?marks?\s+the\s+finding\s+(?:as\s+)?(?:closed|remediated|resolved)\b",
+    r"\brescan\w*\s+(?:automatically\s+)?resolves?\s+the\s+finding\b",
+)
+
+# Policy exemptions are deliberately lexical, not a semantic proof. Match
+# complete source statements, retaining conditions, negations and conjunctions.
+POLICY_LABEL_PREFIX_RE = re.compile(
+    r"^(?:(?:organizational )?policy(?: requirements?)?\s*:\s*|"
+    r"(?:per|according to|under|as required by|as stated in)\s+"
+    r"(?:the\s+)?(?:organizational\s+)?(?:remediation\s+)?"
+    r"(?:policy|guide|guidelines?|standard)"
+    r"(?:\s*[-\u2013\u2014]\s*[^,:;.!?\n]{1,100})?\s*[:,]\s*|"
+    r"(?:organizational\s+)?policy\s+(?:requires?|states?|mandates?)"
+    r"(?:\s+that)?\s+)"
+)
+
+# Split at sentence punctuation, not inside 9.7p1, CVEs, IPs or hostnames.
+SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*\u2022]\s+|\d+[.)]\s+)")
+
+
+def _normalize_policy_statement(text: str) -> str:
+    text = LIST_PREFIX_RE.sub("", text.strip())
+    text = text.replace("**", "").replace("`", "")
+    text = " ".join(text.casefold().split()).rstrip(".!? ")
+    # Only remove balanced quotation marks around the complete statement.
+    for left, right in ((chr(34), chr(34)), ("\u201c", "\u201d"), ("'", "'")):
+        if text.startswith(left) and text.endswith(right):
+            text = text[1:-1].strip().rstrip(".!? ")
+            break
+    return text
+
+
+def _policy_statements(policy_text: str) -> set[str]:
+    """Retain whole paragraphs/list items before splitting their sentences.
+
+    Never split source text on commas, semicolons or 'and': doing so could
+    detach an instruction from a prerequisite or prohibition. Soft line wraps
+    are joined. Retrieved document headers are boundaries, never evidence.
+    """
+    paragraphs: list[str] = []
+    pending: list[str] = []
+    scope = ""
+    for line in policy_text.splitlines():
+        stripped = line.strip()
+        label = stripped.strip("#* ")
+        header = (stripped.startswith(("#", "---", "|"))
+                  or label.endswith(":"))
+        if not stripped or header or LIST_PREFIX_RE.match(stripped):
+            if pending:
+                paragraphs.append(" ".join(pending))
+                pending = []
+        if header:
+            # Retain conditional/prohibitive headings as scope for their items.
+            # A heading is not permission to drop its prerequisite.
+            if SCOPING_WORDS_RE.search(label):
+                scope = label
+            else:
+                scope = ""
+        if stripped and not header:
+            if not pending and scope:
+                pending.append(scope)
+            pending.append(LIST_PREFIX_RE.sub("", stripped))
+    if pending:
+        paragraphs.append(" ".join(pending))
+    return {
+        normalized
+        for paragraph in paragraphs
+        for sentence in SENTENCE_BOUNDARY_RE.split(paragraph)
+        if (normalized := _normalize_policy_statement(sentence))
+    }
+
+
+SCOPING_WORDS_RE = re.compile(
+    r"\b(if|only|unless|until|before|after|when|once|from|never|not|except|"
+    r"prior to|provided|providing|subject to|pending|without)\b", re.IGNORECASE
+)
+DEPENDENT_POLICY_TAIL_RE = re.compile(
+    r"^(?:only|if|unless|until|before|after|when|once|from|except|provided|"
+    r"providing|subject to|pending|without|not until|not before)\b|"
+    r"^(?:this|that|it)\b.*\b(?:not|never|only)\b", re.IGNORECASE
+)
+PRONOUN_TICKET_ACTION_RE = re.compile(
+    r"\b(?:clos\w*|updat\w*|resolv\w*|reopen\w*|archiv\w*|delet\w*|"
+    r"assign\w*|mark\w*|set|document\w*|attach\w*)\s+(?:it|them|this|that)\b"
+)
+
+
+def _policy_clauses(policy_text: str) -> set[str]:
+    """Whole statements plus semicolon clauses with no detached scope.
+
+    Earlier conditional/prohibitive clauses constrain subsequent clauses.
+    A dependent tail (e.g. '; only after approval') also prevents extracting
+    an earlier instruction without that prerequisite.
+    """
+    allowed = set(_policy_statements(policy_text))
+    for statement in list(allowed):
+        clauses = [c.strip() for c in statement.split(";") if c.strip()]
+        if len(clauses) < 2:
+            continue
+        for index, clause in enumerate(clauses):
+            if any(SCOPING_WORDS_RE.search(c) for c in clauses[:index]):
+                break
+            if any(DEPENDENT_POLICY_TAIL_RE.search(c) for c in clauses[index + 1:]):
                 continue
+            allowed.add(clause)
+    return allowed
+
+
+def _ticket_clause_is_policy(sentence: str, policy_text: str) -> bool:
+    """Exempt a mixed recommendation only for its supported ticket clauses.
+
+    No ungrounded continuation after a ticket clause may inherit its exemption,
+    including pronoun/implicit-object actions such as 'and archive it'.
+    """
+    if PRONOUN_TICKET_ACTION_RE.search(sentence):
+        return False
+    allowed = _policy_clauses(policy_text)
+    clauses = [c.strip() for c in re.split(r"[,;]|\band\b", sentence) if c.strip()]
+    seen_ticket = False
+    for clause in clauses:
+        seen_ticket = seen_ticket or bool(TICKET_REFERENCE_RE.search(clause))
+        if seen_ticket and _normalize_policy_statement(clause) not in allowed:
+            return False
+    return seen_ticket
+
+
+def _is_policy_grounded(sentence: str, policy_text: str) -> bool:
+    """Allow only complete source statements, never matching substrings.
+
+    Separately retrieved, complete statements may be joined by semicolons.
+    One grounded clause must never exempt an invented one. Conditions in a
+    source statement cannot be discarded to manufacture an exempt clause.
+    """
+    normalized = _normalize_policy_statement(sentence)
+    stripped = _normalize_policy_statement(
+        POLICY_LABEL_PREFIX_RE.sub("", normalized)
+    )
+    statements = _policy_clauses(policy_text)
+    if normalized in statements or stripped in statements:
+        return True
+    clauses = [c.strip() for c in stripped.split(";")]
+    return len(clauses) > 1 and all(c in statements for c in clauses)
+
+
+# Small, whole-statement allowlist for explicit denials of automatic closure
+# only. Positive closure requirements always need retrieved policy evidence.
+SAFE_RESCAN_STATEMENTS = (
+    r"(?:a |the )?(?:verifying )?rescan(?:ning)? "
+    r"(?:does not|doesn't|cannot|can't|will not|won't) "
+    r"(?:(?:automatically|by itself) )?(?:close|remediate|resolve) "
+    r"(?:the |a )?finding(?: by itself| automatically)?",
+    r"(?:a |the )?rescan(?:ning)? does not (?:by itself )?change "
+    r"(?:the |a )?finding(?:'s)? status(?: by itself)?",
+
+)
+
+
+def _is_safe_rescan_statement(sentence: str) -> bool:
+    normalized = _normalize_policy_statement(sentence)
+    return any(re.fullmatch(pattern, normalized) for pattern in SAFE_RESCAN_STATEMENTS)
+
+
+RECORD_FIELD_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?(asset|action|status|recorded timestamp|justification|"
+    r"review date|finding status)\s*:\s*(.*?)\s*$", re.IGNORECASE
+)
+RECORD_SECTION_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?(patch history|risk acceptances?)\s*:\s*$", re.IGNORECASE
+)
+RECORD_BOUNDARY_RE = re.compile(
+    r"^\s*(?:findings|existing remediation state|recommended next actions|"
+    r"tickets\s*:.*?)\s*$", re.IGNORECASE
+)
+NULL_RECORD_VALUES = frozenset({"none", "null", "not recorded", "not provided", "-"})
+
+
+def _record_text(value: Any) -> str:
+    """Normalize presentation whitespace, never the meaning of a stored value."""
+    return " ".join(str(value).strip().strip("`").split())
+
+
+def _record_value_matches(shown: str, stored: Any, *, date_only: bool = False) -> bool:
+    if stored is None:
+        return _record_text(shown).casefold() in NULL_RECORD_VALUES
+    shown, expected = _record_text(shown), _record_text(stored)
+    if shown == expected:
+        return True
+    # The existing Ticket/Created format permits the date without the time.
+    # Patch timestamps retain their full precision; do not silently truncate.
+    if date_only and re.fullmatch(r"\d{4}-\d{2}-\d{2}", shown):
+        return bool(re.match(re.escape(shown) + r"[ T]\d{2}:\d{2}", expected))
+    return re.sub(r"(?<=\d)T(?=\d{2}:)", " ", shown) == re.sub(
+        r"(?<=\d)T(?=\d{2}:)", " ", expected
+    )
+
+
+def _trace_records(trace_state: dict[str, Any], key: str) -> list[tuple[str, dict]]:
+    """Read per-asset evidence when available; flat fixtures remain supported."""
+    grouped = trace_state.get(key + "_by_asset")
+    if isinstance(grouped, dict):
+        return [
+            (str(asset or record.get("asset_name") or ""), record)
+            for asset, records in grouped.items()
+            for record in records if isinstance(record, dict)
+        ]
+    return [
+        (str(record.get("asset_name") or ""), record)
+        for record in trace_state.get(key, []) if isinstance(record, dict)
+    ]
+
+
+def _ticket_cells(line: str) -> list[str] | None:
+    line = line.strip()
+    if not line.startswith("|"):
+        return None
+    parts = re.split(r"(?<!\\)\|", line)
+    if parts and not parts[0].strip():
+        parts.pop(0)
+    if parts and not parts[-1].strip():
+        parts.pop()
+    return [part.strip().replace(r"\|", "|") for part in parts]
+
+
+def _validate_ticket_values(answer: str, trace_state: dict[str, Any]) -> list[str]:
+    records = [record for _, record in _trace_records(trace_state, "tickets")]
+    records += [r for r in trace_state.get("created_tickets", []) if isinstance(r, dict)]
+    violations: list[str] = []
+    in_table = False
+    saw_header = False
+    row_count = 0
+    for line in answer.splitlines():
+        cells = _ticket_cells(line)
+        if cells is None:
+            in_table = False
+            continue
+        labels = [_record_text(c).casefold() for c in cells]
+        if labels == ["ticket", "status", "title", "created"]:
+            saw_header = in_table = True
+            continue
+        if not in_table:
+            continue
+        if all(re.fullmatch(r":?-{3,}:?", c) for c in cells):
+            continue
+        row_count += 1
+        if len(cells) != 4:
+            violations.append("ticket table row must contain Ticket/Status/Title/Created")
+            continue
+        ticket_id = re.sub(r"^(?:ticket\s*)?#?\s*", "", cells[0], flags=re.IGNORECASE)
+        matched = any(
+            str(record.get("ticket_id", record.get("id", ""))) == ticket_id
+            and all(key in record for key in ("status", "title", "created_at"))
+            and _record_value_matches(cells[1], record["status"])
+            and _record_value_matches(cells[2], record["title"])
+            and _record_value_matches(cells[3], record["created_at"], date_only=True)
+            for record in records
+        )
+        if not matched:
             violations.append(
-                f'organizational policy claim mentions "{term}", '
-                "but that term was not present in retrieved policy context"
+                f"ticket table row {row_count} does not match a retrieved or successfully "
+                "created ticket; copy ID, status, title and creation date from the same record"
             )
+    if trace_state.get("tickets") and (not saw_header or not row_count):
+        violations.append("retrieved tickets need at least one factual Ticket/Status/Title/Created row")
+    return violations
 
+
+def _parse_record_blocks(answer: str) -> tuple[list[tuple[str, dict]], list[str]]:
+    blocks: list[tuple[str, dict]] = []
+    violations: list[str] = []
+    kind = ""
+    fields: dict[str, str] = {}
+
+    def flush() -> None:
+        nonlocal fields
+        if fields and set(fields) != {"asset"}:
+            blocks.append((kind, fields))
+        fields = {}
+
+    for line in answer.splitlines():
+        section = RECORD_SECTION_RE.fullmatch(line)
+        if section:
+            flush()
+            kind = "patch" if section[1].casefold() == "patch history" else "risk"
+            continue
+        if RECORD_BOUNDARY_RE.fullmatch(line):
+            flush()
+            kind = ""
+            continue
+        field = RECORD_FIELD_RE.fullmatch(line)
+        if not field:
+            continue
+        label, value = field[1].casefold(), field[2]
+        if label == "action" and not kind:
+            kind = "patch"
+        if not kind:
+            # Other sections may legitimately use Status/Asset labels.
+            if label in {"recorded timestamp", "justification", "review date"}:
+                violations.append(f'{label} is outside a Patch history or Risk acceptance block')
+            continue
+        if label == "asset" and any(k != "asset" for k in fields):
+            flush()
+        start_field = "action" if kind == "patch" else "status"
+        if label == start_field and start_field in fields:
+            # Multiple records under one heading are supported. Do not mix
+            # fields from adjacent records to manufacture a matching tuple.
+            asset = fields.get("asset")
+            flush()
+            if asset is not None:
+                fields["asset"] = asset
+        if label in fields:
+            violations.append(f'duplicate "{label}" field in {kind} record')
+        fields[label] = value
+    flush()
+    return blocks, violations
+
+
+def _finding_statuses_for_asset(trace_state: dict[str, Any], asset: str) -> set[str]:
+    records = _trace_records(trace_state, "findings")
+    scoped = "findings_by_asset" in trace_state or any(name for name, _ in records)
+    return {
+        str(record["status"])
+        for name, record in records
+        if "status" in record and (name == asset or (not scoped and not asset))
+    }
+
+
+def _validate_record_values(answer: str, trace_state: dict[str, Any]) -> list[str]:
+    violations = _validate_ticket_values(answer, trace_state)
+    blocks, parsing_violations = _parse_record_blocks(answer)
+    violations.extend(parsing_violations)
+    specs = {
+        "patch": ("patch_history", {
+            "action": "action_taken", "status": "status", "recorded timestamp": "performed_at"
+        }),
+        "risk": ("risk_acceptances", {
+            "status": "status", "justification": "justification", "review date": "review_date"
+        }),
+    }
+    for kind, (trace_key, mapping) in specs.items():
+        evidence = _trace_records(trace_state, trace_key)
+        selected = [fields for block_kind, fields in blocks if block_kind == kind]
+        # Retrieval is context, not proof of relevance to the user's CVE.
+        # Omitted RA records need no block; every displayed block is still
+        # checked below against one complete, asset-scoped source record.
+        if kind != "risk" and evidence and not selected:
+            violations.append(f"{trace_key} records must be shown in their labeled blocks")
+        assets = {name for name, _ in evidence if name}
+        for index, fields in enumerate(selected, 1):
+            required = set(mapping)
+            if not required.issubset(fields):
+                violations.append(f"{trace_key} block {index} is missing required fields")
+                continue
+            allowed_fields = required | {"asset"}
+            if kind == "risk":
+                allowed_fields.add("finding status")
+            if set(fields) - allowed_fields:
+                violations.append(f"{trace_key} block {index} contains fields from another record type")
+            if len(assets) > 1 and "asset" not in fields:
+                violations.append(f"{trace_key} block {index} needs an Asset label for cross-asset results")
+                continue
+            matches = [
+                (asset, record) for asset, record in evidence
+                if ("asset" not in fields or fields["asset"] == asset)
+                and all(key in record and _record_value_matches(fields[label], record[key])
+                        for label, key in mapping.items())
+            ]
+            if not matches:
+                violations.append(
+                    f"{trace_key} block {index} does not match any single retrieved record; "
+                    "copy the stored values without combining records or changing dates"
+                )
+                continue
+            if kind != "risk":
+                continue
+            # Risk acceptances are asset-level records. The MCP result does
+            # not identify a finding, so do not infer that link from prose.
+            status_sets = [_finding_statuses_for_asset(trace_state, asset) for asset, _ in matches]
+            shown = fields.get("finding status")
+            if shown is None:
+                if any(status_sets):
+                    violations.append(f"risk_acceptances block {index} needs a separate Finding status field")
+                continue
+            if _record_text(shown).casefold() == "reported separately in findings":
+                if not any(status_sets):
+                    violations.append("Finding status cannot refer to findings that were not retrieved for this asset")
+            elif _record_text(shown).casefold() == "not retrieved":
+                if any(status_sets):
+                    violations.append("Finding status says Not retrieved despite available asset findings")
+            elif not any(len(statuses) == 1 and shown in statuses for statuses in status_sets):
+                violations.append(
+                    f"risk_acceptances block {index} has an unsupported or ambiguous Finding status; "
+                    "use the asset's retrieved status, or Reported separately in Findings for mixed statuses"
+                )
+    return violations
+
+
+def _validate_risk_acceptance_links(answer: str, trace_state: dict[str, Any]) -> list[str]:
+    """Explicit RA/CVE associations need a structured link, not a justification.
+
+    The current MCP schema has no such link. A future cve_id or finding_id
+    field is usable only on the same asset; no technology-name inference.
+    Verbatim Justification fields are validated as data, not interpreted as
+    a finding relationship. Existing policy checks still run independently.
+    """
+    association = re.compile(
+        r"(?<!no )\brisk acceptance(?: record)?\s+(?:(?:is|was)\s+)?"
+        r"(?:for|covers?|applies? to|relates? to|linked to|associated with)\b|"
+        r"\bcve-\d{4}-\d+\s+(?:is\s+)?(?:covered by|accepted under)\s+"
+        r"(?:the |an? |approved |existing )*risk acceptance\b"
+    )
+    risks = _trace_records(trace_state, "risk_acceptances")
+    findings = _trace_records(trace_state, "findings")
+    blocks, _ = _parse_record_blocks(answer)
+    displayed = [fields for kind, fields in blocks if kind == "risk"]
+    if displayed:
+        risks = [
+            (asset, record) for asset, record in risks
+            if any(
+                ("asset" not in fields or fields["asset"] == asset)
+                and all(label in fields and key in record
+                        and _record_value_matches(fields[label], record[key])
+                        for label, key in (("status", "status"), ("justification", "justification"),
+                                           ("review date", "review_date")))
+                for fields in displayed
+            )
+        ]
+    named_assets = {asset for asset, _ in risks if asset}
+    violations: list[str] = []
+    for line in answer.splitlines():
+        if RECORD_FIELD_RE.fullmatch(line):
+            continue
+        for sentence in SENTENCE_BOUNDARY_RE.split(line.casefold()):
+            cves = set(re.findall(r"\bcve-\d{4}-\d+\b", sentence))
+            if not cves or not association.search(sentence):
+                continue
+            linked_cves: set[str] = set()
+            candidates = [(asset, record) for asset, record in risks
+                          if len(named_assets) <= 1 or asset.casefold() in sentence]
+            # Do not borrow a different record's explicit link for this one.
+            for asset, record in candidates if len(candidates) == 1 else []:
+                if record.get("cve_id"):
+                    linked_cves.add(str(record["cve_id"]).casefold())
+                if record.get("finding_id") is not None:
+                    linked_cves.update(
+                        str(finding["cve_id"]).casefold()
+                        for finding_asset, finding in findings
+                        if finding_asset == asset and finding.get("cve_id")
+                        and finding.get("finding_id", finding.get("id")) == record["finding_id"]
+                    )
+            if not cves.issubset(linked_cves):
+                violations.append(
+                    "risk acceptance was associated with a CVE without an explicit "
+                    "retrieved finding link; an asset or justification is not that link"
+                )
     return violations
 
 
@@ -954,6 +1553,8 @@ def validate_final_answer(
     lowered = answer.lower()
     collapsed = " ".join(lowered.split())
     violations: list[str] = []
+    # Keep document/paragraph boundaries for complete-statement matching.
+    policy_text = "\n\n---\n\n".join(trace_state.get("policy_contexts") or [])
 
     for phrase in REVIEW_DATE_VIOLATIONS:
         if phrase in lowered:
@@ -1008,24 +1609,37 @@ def validate_final_answer(
             if not line.strip().startswith("|")
         )
 
-        for phrase in TICKET_WORKFLOW_VIOLATIONS:
-            if phrase in structural_section:
-                violations.append(
-                    f'ticket workflow was inferred from ticket titles ("{phrase}")'
-                )
-
-        for sentence in re.split(r"[.!?\n]", structural_section):
+        ticket_mentioned = False
+        for sentence in SENTENCE_BOUNDARY_RE.split(structural_section):
+            ticket_mentioned = ticket_mentioned or bool(TICKET_REFERENCE_RE.search(sentence))
+            policy_grounded = _is_policy_grounded(sentence, policy_text)
+            ticket_rule_exempt = (
+                policy_grounded or _ticket_clause_is_policy(sentence, policy_text)
+            )
             if (
-                TICKET_REFERENCE_RE.search(sentence)
-                and any(term in sentence for term in TICKET_ACTION_TERMS)
+                ticket_mentioned and PRONOUN_TICKET_ACTION_RE.search(sentence)
+                and not policy_grounded
             ):
-                violations.append(
-                    "a specific ticket was assigned an operational action in "
-                    f'Recommended next actions ("{sentence.strip()[:80]}")'
-                )
+                violations.append("unsupported ticket action refers to a previous ticket by pronoun")
+            if not ticket_rule_exempt:
+                for phrase in TICKET_WORKFLOW_VIOLATIONS:
+                    if phrase in sentence:
+                        violations.append(
+                            "unsupported ticket workflow in Recommended next "
+                            f'actions ("{phrase}")'
+                        )
+                if (
+                    TICKET_REFERENCE_RE.search(sentence)
+                    and any(term in sentence for term in TICKET_ACTION_TERMS)
+                ):
+                    violations.append(
+                        "an unsupported ticket action was assigned in "
+                        f'Recommended next actions ("{sentence.strip()[:80]}")'
+                    )
 
             if (
-                any(term in sentence for term in RA_TRIGGER_TERMS)
+                not policy_grounded
+                and any(term in sentence for term in RA_TRIGGER_TERMS)
                 and RA_INTERPRETIVE_RE.search(sentence)
             ):
                 violations.append(
@@ -1033,14 +1647,23 @@ def validate_final_answer(
                     f'authorization in Recommended next actions ("{sentence.strip()[:80]}")'
                 )
 
-    for sentence in re.split(r"[.!?\n]", lowered):
-        if "rescan" in sentence and (
-            "close" in sentence or "closure" in sentence
+    for sentence in SENTENCE_BOUNDARY_RE.split(lowered):
+        if (
+            _is_policy_grounded(sentence, policy_text)
+            or _is_safe_rescan_statement(sentence)
         ):
+            continue
+        if "rescan" in sentence and re.search(r"\bclos(?:e[sd]?|ing|ure)\b", sentence):
             violations.append(
-                "a rescan and closure were combined in one sentence; state "
-                "verification first, then conditional closure "
+                "unsupported rescan/closure statement; quote the complete "
+                "retrieved policy including conditions, or recommend "
+                "verification separately "
                 f'("{sentence.strip()[:80]}")'
+            )
+        elif any(re.search(p, sentence) for p in RESCAN_STATE_CHANGE_PATTERNS):
+            violations.append(
+                "a rescan was presented as changing the finding state by "
+                f'itself ("{sentence.strip()[:80]}")'
             )
 
     if trace_state.get("tickets"):
@@ -1050,38 +1673,32 @@ def validate_final_answer(
                 "Ticket/Status/Title/Created table"
             )
 
-    if trace_state.get("risk_acceptances"):
+    ra_match = re.search(r"^\s*(?:[-*]\s+)?risk acceptances?\s*:", lowered, re.MULTILINE)
+    for sentence in SENTENCE_BOUNDARY_RE.split(lowered):
         for phrase in RISK_ACCEPTANCE_VIOLATIONS:
-            if phrase in lowered:
-                violations.append(
-                    f'risk-acceptance status was reinterpreted ("{phrase}")'
+            if phrase not in sentence:
+                continue
+            if phrase == "remediation deadline":
+                refers_to_ra = ra_match is not None or any(
+                    term in sentence for term in ("risk acceptance", "review_date", "review date")
                 )
-
-        ra_match = re.search(r"risk acceptances?:", lowered)
-
-        if ra_match is None:
-            violations.append(
-                'risk acceptance is missing the required "Risk acceptance:" block'
-            )
-        else:
-            ra_section = lowered[ra_match.start():]
-
-            boundary = ra_section.find("recommended next actions", 1)
-            if boundary != -1:
-                ra_section = ra_section[:boundary]
-
-            for label in REQUIRED_RISK_ACCEPTANCE_LABELS:
-                if label == "finding status:" and not trace_state.get("findings"):
+                if not refers_to_ra or _is_policy_grounded(sentence, policy_text):
                     continue
-                if not re.search(
-                    r"^\s*" + re.escape(label),
-                    ra_section,
-                    flags=re.MULTILINE,
-                ):
-                    violations.append(
-                        f'risk acceptance is missing required "{label}" field'
-                    )
+            violations.append(f'risk-acceptance status was reinterpreted ("{phrase}")')
 
+    if ra_match is not None:
+        ra_section = lowered[ra_match.start():]
+        boundary = ra_section.find("recommended next actions", 1)
+        if boundary != -1:
+            ra_section = ra_section[:boundary]
+        for label in REQUIRED_RISK_ACCEPTANCE_LABELS:
+            if label == "finding status:" and not trace_state.get("findings"):
+                continue
+            if not re.search(r"^\s*" + re.escape(label), ra_section, flags=re.MULTILINE):
+                violations.append(f'risk acceptance is missing required "{label}" field')
+
+    violations.extend(_validate_record_values(answer, trace_state))
+    violations.extend(_validate_risk_acceptance_links(answer, trace_state))
     violations.extend(validate_policy_attributions(answer, trace_state))
 
     return violations
