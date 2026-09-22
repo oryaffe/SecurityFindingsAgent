@@ -7,6 +7,7 @@ The system combines **policy RAG**, an **LLM tool-use loop**, and **MCP-backed S
 > Educational project, not a production security platform. It queries stored scan results. It does not run vulnerability scans, install patches, or create tickets in Jira or ServiceNow.
 
 ## Demo
+
 ![Security Findings Agent demo](docs/images/security-agent-demo.png)
 
 ## What it does
@@ -15,6 +16,13 @@ The system combines **policy RAG**, an **LLM tool-use loop**, and **MCP-backed S
 - Retrieves the authenticated user's assets, findings, scans, patch history, risk acceptances, and remediation tickets.
 - Creates remediation tickets for the authenticated user's own assets.
 - Supports findings beyond CVEs, including misconfigurations, exposed services, exposed data, and end-of-life software.
+- Uses deterministic semantic validation to catch unsupported policy, ticket, patch-history, and remediation claims before returning a final answer.
+
+### Agentic remediation workflow
+
+The agent can maintain conversational context, identify the relevant finding, check existing remediation state, and create a remediation ticket through MCP.
+
+![Agentic remediation ticket workflow](docs/images/security-agent-ticket-workflow.png)
 
 ## Example questions
 
@@ -32,19 +40,36 @@ How should I remediate this finding?
 Open a remediation ticket for this issue.
 ```
 
+### Multi-asset scan analysis
+
+The agent can correlate owned assets, scan executions, findings, severity, remediation state, and organizational SLAs in one conversation.
+
+![Multi-asset scan and SLA analysis](docs/images/security-agent-scan-analysis.png)
+
 ## How it works
 
 ```text
 User -> Browser / CLI
          -> Agentic LLM loop
-              ├─ RAG -> ChromaDB + all-MiniLM-L6-v2 + security policies
-              └─ MCP -> SQLite scoped reads + ticket creation
+              |- RAG -> ChromaDB + all-MiniLM-L6-v2 + security policies
+              `- MCP -> SQLite scoped reads + ticket creation
+         -> Semantic validation
          -> Grounded response
 ```
 
 The LLM decides when it needs policy knowledge, operational data, or both.
 
-Authorization is enforced by application and database logic, not by asking the model to stay in scope. The trusted application layer injects the authenticated user identity, so the model cannot choose which user's data to access.
+### RAG + MCP execution trace
+
+With Show Thinking enabled, the browser displays a structured execution trace showing tool selection, authorization checks, retrieved evidence, policy retrieval, and semantic validation. It does not expose raw chain-of-thought.
+
+![RAG and MCP execution trace](docs/images/security-agent-rag-mcp-trace.png)
+
+### Access control
+
+Authorization is enforced by application and database logic, not by asking the model to stay in scope. The trusted application layer injects the authenticated user identity, so text in the conversation cannot switch the user whose protected data is being accessed.
+
+![Authenticated access control](docs/images/security-agent-access-control.png)
 
 The MCP server trusts the application calling it and must remain private and inaccessible to untrusted clients.
 
@@ -98,7 +123,8 @@ Docker packaging, a separate Web client/server architecture, and LiteLLM fallbac
 | [EC2 deployment](docs/deployment.md) | AWS deployment and SSH forwarding |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and recovery |
 | [Validation](docs/validation.md) | Validation checklist and recorded results |
-| [Course project specification](docs/project-requirements.md) | Course requirements, domain adaptation, and implementation mapping |
+| [Course project specification](docs/project-specification.pdf) | Original course project specification |
+| [Project requirements mapping](docs/project-requirements.md) | Domain adaptation and implementation mapping |
 | [Security](SECURITY.md) | Security boundaries, limitations, and reporting |
 | [Contributing](CONTRIBUTING.md) | Contribution workflow |
 | [Changelog](CHANGELOG.md) | Project milestones |
@@ -138,9 +164,9 @@ The system was built from the same core architecture as the course's customer-su
 
 The agent loop, RAG, MCP-based database access, memory, Web and CLI interfaces, and ticket-write workflow remain the architectural foundation.
 
-The security adaptation adds domain-specific policies and operational records, asset ownership, stronger authentication, authorization boundaries, and remediation workflows.
+The security adaptation adds domain-specific policies and operational records, asset ownership, stronger authentication, authorization boundaries, remediation workflows, and deterministic semantic validation.
 
-See the [Course project specification](docs/project-requirements.md) for the original requirements, domain adaptation, and implementation mapping.
+See the [original course project specification](docs/project-specification.pdf) and the [project requirements mapping](docs/project-requirements.md) for the source requirements and the cybersecurity adaptation.
 
 ## License
 
