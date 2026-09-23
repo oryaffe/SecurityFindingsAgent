@@ -14,6 +14,8 @@ A useful private report includes the affected commit, prerequisites, minimal rep
 
 ## Current controls and boundaries
 
+![Security Findings Agent security boundaries](docs/images/who-guards-the-boundary.png)
+
 - Password verification occurs within MCP using bcrypt; password hashes are not returned through MCP.
 - Web authentication uses JWT; CLI authentication does not use Web JWTs.
 - Authentication tools are excluded from the LLM-visible tool list.
