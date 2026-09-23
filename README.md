@@ -1,174 +1,160 @@
 # Security Findings Agent
 
-Ask security-hardening questions, retrieve findings on **your** assets, and open remediation tickets from a browser chat or CLI.
+**Agentic AI for vulnerability and exposure workflows.**
 
-The system combines **policy RAG**, an **LLM tool-use loop**, and **MCP-backed SQLite access**. Answers are grounded in retrieved security policies and the authenticated user's own operational records.
+A Python application that combines **local policy RAG**, **MCP tool orchestration**, and **authenticated operational data** to investigate security findings and follow their remediation state. Available through a browser chat and CLI.
 
-> Educational project, not a production security platform. It queries stored scan results. It does not run vulnerability scans, install patches, or create tickets in Jira or ServiceNow.
+The security workflow brings together findings, scan records, patch history, risk acceptances, and remediation tickets. It demonstrates both cybersecurity reasoning and the implementation of an AI agent with tools, memory, authentication, and cloud deployment.
+
+[Architecture](docs/architecture.md) · [Installation](docs/installation.md) · [Security](SECURITY.md) · [Validation](docs/validation.md)
 
 ## Demo
 
-![Security Findings Agent demo](docs/images/security-agent-demo.png)
+Ask about an asset, inspect its recorded findings, and follow up on remediation in the same conversation.
+
+![Browser conversation showing asset findings and a remediation follow-up](docs/images/security-agent-demo.png)
 
 ## What it does
 
-- Answers hardening and remediation questions using local RAG over 21 security policy and remediation documents.
-- Retrieves the authenticated user's assets, findings, scans, patch history, risk acceptances, and remediation tickets.
-- Creates remediation tickets for the authenticated user's own assets.
-- Supports findings beyond CVEs, including misconfigurations, exposed services, exposed data, and end-of-life software.
-- Uses deterministic semantic validation to catch unsupported policy, ticket, patch-history, and remediation claims before returning a final answer.
+- **Investigates recorded exposures:** retrieves the signed-in user's assets, scan results, findings, and severity, including vulnerabilities, misconfigurations, exposed services, exposed data, and end-of-life software.
+- **Brings remediation evidence together:** retrieves patch history, risk acceptances, and existing tickets to help assess the recorded state of a finding.
+- **Retrieves policy guidance:** searches 21 local sample security-policy and remediation documents using ChromaDB and Sentence Transformers.
+- **Creates local remediation tickets:** writes a ticket for an asset owned by the authenticated user through MCP.
+- **Checks selected response claims:** applies deterministic validation rules to policy and operational statements, with a correction step when violations are detected.
 
-### Agentic remediation workflow
+A central security distinction in the project is that an `Applied` patch-history entry does not, by itself, demonstrate that remediation has been verified.
 
-The agent can maintain conversational context, identify the relevant finding, check existing remediation state, and create a remediation ticket through MCP.
+### Remediation workflow
 
-![Agentic remediation ticket workflow](docs/images/security-agent-ticket-workflow.png)
+The conversation can move from retrieving findings to creating a ticket and listing recorded tickets.
 
-## Example questions
+![Conversation moving from findings to local remediation-ticket creation](docs/images/security-agent-ticket-workflow.png)
+
+Ticket creation writes to the project's SQLite database. The application queries stored scan results; it does not run scanners, install patches, or create Jira or ServiceNow tickets.
+
+## What I designed
+
+- **Security domain adaptation:** remodeled a course customer-support agent around assets, findings, scans, patch history, risk acceptances, and remediation tickets.
+- **Remediation workflows:** adapted the prompts, sample policies, and scenarios to distinguish finding status, recorded treatment actions, accepted risks, and verification evidence.
+- **Authentication and access boundaries:** added password authentication, signed Web sessions, and session-derived identity injection for ownership-scoped tool access.
+- **Response checks:** developed and iterated deterministic rules for selected policy, ticket, patch-history, risk-acceptance, and remediation claims.
+
+The agent loop, RAG, MCP, and Web/CLI architecture build on the course foundation. The [requirements mapping](docs/project-requirements.md) explains the adaptation and additions.
+
+## How it works
+
+![Conceptual overview of the user interface, agent core, model, policy retrieval, and MCP data access](docs/images/security-agent-question-to-answer.png)
+
+1. **Authenticate:** users sign in through the browser or CLI. The application maintains the authenticated identity outside the model's tool arguments.
+2. **Select tools:** the shared agent core sends the conversation and available tools to Anthropic. The model can request policy retrieval or operational data.
+3. **Retrieve evidence:** `search_policies` runs locally against ChromaDB. Operational tools run through MCP and perform ownership-scoped SQLite reads or ticket writes.
+4. **Continue the conversation:** the core returns tool results to the model, which can request additional tools. Conversation history supports follow-up questions.
+5. **Check the response:** a deterministic validation layer checks selected claims and can request a corrected answer. It is a rule-based quality check, not a guarantee of factual accuracy.
+
+RAG runs locally in `policy_retriever.py`; it is separate from the MCP data-access path. See [Architecture](docs/architecture.md) for the runtime flow and trust boundaries.
+
+### Execution trace
+
+The browser's **Show Thinking** option displays a structured execution trace of tool calls, retrieval, and validation events. It is an application trace, not raw model chain-of-thought.
+
+This example brings together a finding, an existing ticket, patch-history records, and a retrieved policy, while distinguishing an applied patch from verified remediation.
+
+![Execution trace and answer distinguishing patch history from verification evidence](docs/images/security-agent-rag-mcp-trace.png)
+
+### Access control
+
+The application injects the authenticated `user_id`, and MCP tools check asset ownership before protected reads or ticket creation. Authentication tools are excluded from the model's available tools.
+
+The following conversation illustrates a refusal to switch identity based on a user message. The ownership checks themselves are implemented in code; this screenshot is a conversation example rather than a standalone test of those checks.
+
+![Conversation refusing a request to impersonate another user](docs/images/security-agent-access-control.png)
+
+The MCP server trusts the calling application and must remain private. See [Security](SECURITY.md) for authentication, authorization, and deployment boundaries.
+
+## Try these questions
 
 ```text
-What vulnerabilities were found on server-prod-01?
+What findings are recorded for server-prod-02?
 
-Has this finding already been patched?
+Show the patch history and existing remediation tickets for this asset.
 
 Is there an approved risk acceptance for this exposure?
 
-What does our Linux hardening policy require?
-
-How should I remediate this finding?
+What does the sample Linux hardening policy require?
 
 Open a remediation ticket for this issue.
 ```
 
-### Multi-asset scan analysis
-
-The agent can correlate owned assets, scan executions, findings, severity, remediation state, and organizational SLAs in one conversation.
-
-![Multi-asset scan and SLA analysis](docs/images/security-agent-scan-analysis.png)
-
-## How it works
-
-![From question to answer](docs/images/security-agent-question-to-answer.png)
-
-The shared agent core sends the conversation and available tool definitions to Anthropic. The model may request either a local policy-search tool or an operational MCP tool.
-
-For a policy question, the core executes `search_policies` locally through `policy_retriever.py`, which embeds the query with `all-MiniLM-L6-v2` and retrieves relevant policy documents from embedded ChromaDB.
-
-For operational data, the core executes an MCP tool through the MCP client/server boundary. The trusted application injects the authenticated `user_id`, and the MCP server performs ownership-scoped reads or remediation-ticket writes against SQLite.
-
-Each tool result is returned to the model. The model can request additional tools, so the loop can alternate between RAG and operational data until enough grounded context has been collected. When the model produces final text, deterministic semantic validation checks the answer before it is returned to the user.
-
-### RAG + MCP execution trace
-
-With Show Thinking enabled, the browser displays a structured execution trace showing tool selection, authorization checks, retrieved evidence, policy retrieval, and semantic validation. It does not expose raw chain-of-thought.
-
-![RAG and MCP execution trace](docs/images/security-agent-rag-mcp-trace.png)
-
-### Access control
-
-Authorization is enforced by application and database logic, not by asking the model to stay in scope. The trusted application layer injects the authenticated user identity, so text in the conversation cannot switch the user whose protected data is being accessed.
-
-![Authenticated access control](docs/images/security-agent-access-control.png)
-
-The MCP server trusts the application calling it and must remain private and inaccessible to untrusted clients.
-
-For the detailed runtime loop, authentication flow, tool paths, and trust boundaries, see [Architecture](docs/architecture.md) and [Security](SECURITY.md).
-
 ## Quick start
 
-For complete setup, including dependencies, the demo database, model download, and RAG indexing, see the [Installation guide](docs/installation.md).
+First follow the [Installation guide](docs/installation.md) to install dependencies, configure the [environment](.env.example), initialize a fresh demo database, and build the RAG index.
 
-Start the MCP server:
+From the project root, with the environment activated, start MCP:
 
 ```bash
 python mcp_server.py
 ```
 
-Start the Web application in another terminal:
+Start the Web application in another terminal using the same environment:
 
 ```bash
 python -m uvicorn app:app --host 127.0.0.1 --port 8080 --workers 1 --log-level info
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8080
-```
-
-To use the CLI:
+Open `http://127.0.0.1:8080`. To use the CLI with MCP running:
 
 ```bash
 python main.py
 ```
 
-Demo credentials and additional example prompts are available in the [User guide](docs/user-guide.md).
+Demo sign-in details and usage instructions are in the [User guide](docs/user-guide.md).
 
-## Stack
+## Stack and deployment
 
-Python 3.12 · Anthropic API · RAG · MCP · FastAPI · WebSocket · SQLite · ChromaDB · Sentence Transformers · bcrypt · JWT · AWS EC2
+**Python 3.12 · Anthropic API · RAG · MCP · FastAPI · WebSocket · SQLite · ChromaDB · Sentence Transformers · bcrypt · JWT · AWS EC2**
 
-The application has been validated locally on Windows and on AWS EC2 with Ubuntu 24.04.
-
-Docker packaging, a separate Web client/server architecture, and LiteLLM fallback are out of scope in this version.
+The project has been run locally on Windows and on Ubuntu 24.04 in AWS EC2, with access through SSH forwarding. Deployment instructions are in the [EC2 guide](docs/deployment.md).
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| [Installation](docs/installation.md) | Environment, dependencies, demo data, and indexing |
-| [User guide](docs/user-guide.md) | Sign-in, questions, tickets, and sessions |
-| [Architecture](docs/architecture.md) | Components, agent loop, tool paths, data flow, and authorization boundaries |
-| [EC2 deployment](docs/deployment.md) | AWS deployment and SSH forwarding |
-| [Troubleshooting](docs/troubleshooting.md) | Common problems and recovery |
+| [Installation](docs/installation.md) | Dependencies, configuration, demo data, and indexing |
+| [User guide](docs/user-guide.md) | Sign-in, conversations, tickets, and sessions |
+| [Architecture](docs/architecture.md) | Components, tool orchestration, data flow, and trust boundaries |
+| [EC2 deployment](docs/deployment.md) | Linux deployment and SSH forwarding |
+| [Security](SECURITY.md) | Authentication, authorization, limitations, and reporting |
 | [Validation](docs/validation.md) | Validation checklist and recorded results |
-| [Course project specification](docs/project-specification.pdf) | Original course project specification |
-| [Project requirements mapping](docs/project-requirements.md) | Domain adaptation and implementation mapping |
-| [Security](SECURITY.md) | Security boundaries, limitations, and reporting |
+| [Troubleshooting](docs/troubleshooting.md) | Common problems and recovery |
 | [Contributing](CONTRIBUTING.md) | Contribution workflow |
 | [Changelog](CHANGELOG.md) | Project milestones |
-| [Environment template](.env.example) | Configuration names and safe defaults |
-| [License](LICENSE) | Project usage terms |
 
-## Data handling and limitations
+## Data scope and limitations
 
-All seeded project data is synthetic.
+This is an educational portfolio project using synthetic operational records and sample policies. The demo content is designed to exercise the application's workflows and should not be treated as authoritative vulnerability intelligence or production remediation guidance.
 
-Selected policy text, operational tool results, and conversation context can be sent to Anthropic to generate responses. Local SQLite and ChromaDB storage does not mean that all AI processing remains local.
+Selected policy text, operational tool results, and conversation context can be sent to Anthropic. Local SQLite and ChromaDB storage does not make the entire inference workflow local.
 
-Current limitations:
-
-- Up to five authenticated Web sessions per process.
-- Up to 20 conversation messages retained per session.
-- Sessions are in memory; a restart drops them.
-- Demo accounts intentionally share a known sample password. Do not expose the demo instance to untrusted users.
-- AI-generated answers may be incomplete or incorrect and should be validated against source records and policies.
-
-Never commit API keys, JWT secrets, `.env`, private keys, live databases, model caches, or sensitive logs.
+- AI-generated answers and rule-based validation have coverage limits. Check conclusions against their source records and authoritative guidance.
+- The Web application supports up to five authenticated sessions per process and retains up to 20 conversation messages per session.
+- Sessions are stored in memory and are lost on restart.
+- Demo accounts share a known sample password. Keep the demo instance restricted to trusted users.
+- Docker packaging is not included in this version.
 
 ## Project origin
 
-The system was built from the same core architecture as the course's customer-support agent exercise, while the business domain was redesigned around vulnerability and exposure management.
+Developed as the final project for an AI Engineering program, adapting a customer-support agent architecture to vulnerability and exposure management. The course foundation includes agent orchestration, RAG, MCP, conversation memory, Web/CLI interfaces, ticket creation, and EC2 deployment.
 
-| Original domain | Security domain |
-|---|---|
-| Customers | Users |
-| Products | Findings |
-| Orders | Assets |
-| Order items | Scans |
-| Shipments | Scan results |
-| Returns | Risk acceptances |
-| Payments | Patch history |
-| Support tickets | Remediation tickets |
+See the [original specification](docs/project-specification.pdf) and [requirements mapping](docs/project-requirements.md) for the source requirements and security adaptation.
 
-The agent loop, RAG, MCP-based database access, memory, Web and CLI interfaces, and ticket-write workflow remain the architectural foundation.
+## Author
 
-The security adaptation adds domain-specific policies and operational records, asset ownership, stronger authentication, authorization boundaries, remediation workflows, and deterministic semantic validation.
-
-See the [original course project specification](docs/project-specification.pdf) and the [project requirements mapping](docs/project-requirements.md) for the source requirements and the cybersecurity adaptation.
+**Ory Yaffe Mordechai**  
+Cybersecurity · Security Operations · Technical Investigations · AI Engineering  
+[LinkedIn](https://www.linkedin.com/in/oryaffe) · [GitHub profile](https://github.com/oryaffe)
 
 ## License
 
 Copyright (c) 2026 Ory Yaffe Mordechai.
 
-All rights reserved. Source is published for review; reuse requires permission.
+All rights reserved. Source is published for review; reuse requires permission. See [License](LICENSE).
