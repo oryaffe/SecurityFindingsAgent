@@ -48,16 +48,15 @@ The agent can correlate owned assets, scan executions, findings, severity, remed
 
 ## How it works
 
-```text
-User -> Browser / CLI
-         -> Agentic LLM loop
-              |- RAG -> ChromaDB + all-MiniLM-L6-v2 + security policies
-              `- MCP -> SQLite scoped reads + ticket creation
-         -> Semantic validation
-         -> Grounded response
-```
+![From question to answer](docs/images/security-agent-question-to-answer.png)
 
-The LLM decides when it needs policy knowledge, operational data, or both.
+The shared agent core sends the conversation and available tool definitions to Anthropic. The model may request either a local policy-search tool or an operational MCP tool.
+
+For a policy question, the core executes `search_policies` locally through `policy_retriever.py`, which embeds the query with `all-MiniLM-L6-v2` and retrieves relevant policy documents from embedded ChromaDB.
+
+For operational data, the core executes an MCP tool through the MCP client/server boundary. The trusted application injects the authenticated `user_id`, and the MCP server performs ownership-scoped reads or remediation-ticket writes against SQLite.
+
+Each tool result is returned to the model. The model can request additional tools, so the loop can alternate between RAG and operational data until enough grounded context has been collected. When the model produces final text, deterministic semantic validation checks the answer before it is returned to the user.
 
 ### RAG + MCP execution trace
 
@@ -73,7 +72,7 @@ Authorization is enforced by application and database logic, not by asking the m
 
 The MCP server trusts the application calling it and must remain private and inaccessible to untrusted clients.
 
-For implementation details, see [Architecture](docs/architecture.md) and [Security](SECURITY.md).
+For the detailed runtime loop, authentication flow, tool paths, and trust boundaries, see [Architecture](docs/architecture.md) and [Security](SECURITY.md).
 
 ## Quick start
 
@@ -119,7 +118,7 @@ Docker packaging, a separate Web client/server architecture, and LiteLLM fallbac
 |---|---|
 | [Installation](docs/installation.md) | Environment, dependencies, demo data, and indexing |
 | [User guide](docs/user-guide.md) | Sign-in, questions, tickets, and sessions |
-| [Architecture](docs/architecture.md) | Components, data flow, and authorization boundaries |
+| [Architecture](docs/architecture.md) | Components, agent loop, tool paths, data flow, and authorization boundaries |
 | [EC2 deployment](docs/deployment.md) | AWS deployment and SSH forwarding |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and recovery |
 | [Validation](docs/validation.md) | Validation checklist and recorded results |
